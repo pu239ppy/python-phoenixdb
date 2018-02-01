@@ -23,10 +23,13 @@ import time
 from phoenixdb import errors
 from phoenixdb.avatica.proto import requests_pb2, common_pb2, responses_pb2
 
-try:
-    import httplib
-except ImportError:
-    import http.client as httplib
+#try:
+#    import httplib
+#except ImportError:
+#    import http.client as httplib
+import requests
+from requests_kerberos import HTTPKerberosAuth
+
 
 try:
     import urlparse
@@ -149,43 +152,30 @@ class AvaticaClient(object):
         self.connection = None
 
     def connect(self):
-        """Opens a HTTP connection to the RPC server."""
-        logger.debug("Opening connection to %s:%s", self.url.hostname, self.url.port)
-        try:
-            self.connection = httplib.HTTPConnection(self.url.hostname, self.url.port)
-            self.connection.connect()
-        except (httplib.HTTPException, socket.error) as e:
-            raise errors.InterfaceError('Unable to connect to the specified service', e)
+        """This method used to open a persistent TCP connection
+        requests does not require this"""
+        pass
 
     def close(self):
-        """Closes the HTTP connection to the RPC server."""
-        if self.connection is not None:
-            logger.debug("Closing connection to %s:%s", self.url.hostname, self.url.port)
-            try:
-                self.connection.close()
-            except httplib.HTTPException:
-                logger.warning("Error while closing connection", exc_info=True)
-            self.connection = None
+        """Also does nothing per requests"""
+        pass
 
     def _post_request(self, body, headers):
         retry_count = self.max_retries
         while True:
             logger.debug("POST %s %r %r", self.url.path, body, headers)
             try:
-                self.connection.request('POST', self.url.path, body=body, headers=headers)
-                response = self.connection.getresponse()
-            except httplib.HTTPException as e:
+                response = requests.request('post', self.url.path, data=body, headers=headers, auth=HTTPKerberosAuth())
+            except requests.HTTPError as e:
                 if retry_count > 0:
                     delay = math.exp(-retry_count)
                     logger.debug("HTTP protocol error, will retry in %s seconds...", delay, exc_info=True)
-                    self.close()
-                    self.connect()
                     time.sleep(delay)
                     retry_count -= 1
                     continue
                 raise errors.InterfaceError('RPC request failed', cause=e)
             else:
-                if response.status == httplib.SERVICE_UNAVAILABLE:
+                if response.status == requests.codes.service_unavailable:
                     if retry_count > 0:
                         delay = math.exp(-retry_count)
                         logger.debug("Service unavailable, will retry in %s seconds...", delay, exc_info=True)
@@ -207,7 +197,7 @@ class AvaticaClient(object):
         response = self._post_request(body, headers)
         response_body = response.read()
 
-        if response.status != httplib.OK:
+        if response.status != requests.codes.ok:
             logger.debug("Received response\n%s", response_body)
             if b'<html>' in response_body:
                 parse_error_page(response_body)
