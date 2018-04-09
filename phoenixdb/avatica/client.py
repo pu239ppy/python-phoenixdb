@@ -23,12 +23,8 @@ import time
 from phoenixdb import errors
 from phoenixdb.avatica.proto import requests_pb2, common_pb2, responses_pb2
 
-#try:
-#    import httplib
-#except ImportError:
-#    import http.client as httplib
 import requests
-from requests_kerberos import HTTPKerberosAuth
+from requests_kerberos import HTTPKerberosAuth, OPTIONAL
 
 
 try:
@@ -95,6 +91,7 @@ SQLSTATE_ERROR_CLASSES = [
 OPEN_CONNECTION_PROPERTIES = (
     'user',  # User for the database connection
     'password',  # Password for the user
+    'authentication',
 )
 
 
@@ -163,9 +160,9 @@ class AvaticaClient(object):
     def _post_request(self, body, headers):
         retry_count = self.max_retries
         while True:
-            logger.debug("POST %s %r %r", self.url.path, body, headers)
+            logger.debug("POST %s %r %r", self.url.geturl(), body, headers)
             try:
-                response = requests.request('post', self.url.path, data=body, headers=headers, auth=HTTPKerberosAuth())
+                response = requests.request('post', self.url.geturl(), data=body, stream=True, headers=headers, auth=HTTPKerberosAuth(mutual_authentication=OPTIONAL)) 
             except requests.HTTPError as e:
                 if retry_count > 0:
                     delay = math.exp(-retry_count)
@@ -175,7 +172,7 @@ class AvaticaClient(object):
                     continue
                 raise errors.InterfaceError('RPC request failed', cause=e)
             else:
-                if response.status == requests.codes.service_unavailable:
+                if response.status_code == requests.codes.service_unavailable:
                     if retry_count > 0:
                         delay = math.exp(-retry_count)
                         logger.debug("Service unavailable, will retry in %s seconds...", delay, exc_info=True)
@@ -195,16 +192,16 @@ class AvaticaClient(object):
         headers = {'content-type': 'application/x-google-protobuf'}
 
         response = self._post_request(body, headers)
-        response_body = response.read()
+        response_body = response.raw.read()
 
-        if response.status != requests.codes.ok:
+        if response.status_code != requests.codes.ok:
             logger.debug("Received response\n%s", response_body)
             if b'<html>' in response_body:
                 parse_error_page(response_body)
             else:
                 # assume the response is in protobuf format
                 parse_error_protobuf(response_body)
-            raise errors.InterfaceError('RPC request returned invalid status code', response.status)
+            raise errors.InterfaceError('RPC request returned invalid status code', response.status_code)
 
         message = common_pb2.WireMessage()
         message.ParseFromString(response_body)
@@ -216,7 +213,7 @@ class AvaticaClient(object):
 
         expected_response_type = 'org.apache.calcite.avatica.proto.Responses$' + expected_response_type
         if message.name != expected_response_type:
-            raise errors.InterfaceError('unexpected response type "{}"'.format(message.name))
+            raise errors.InterfaceError('unexpected response type "{}" expected "{}"'.format(message.name, expected_response_type))
 
         return message.wrapped_message
 
