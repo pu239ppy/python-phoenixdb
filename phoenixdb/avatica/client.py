@@ -92,7 +92,6 @@ SQLSTATE_ERROR_CLASSES = [
 OPEN_CONNECTION_PROPERTIES = (
     'user',  # User for the database connection
     'password',  # Password for the user
-    'authentication',
 )
 
 
@@ -139,7 +138,7 @@ class AvaticaClient(object):
     to a server using :func:`phoenixdb.connect`.
     """
 
-    def __init__(self, url, max_retries=None):
+    def __init__(self, url, max_retries=None, auth=None):
         """Constructs a new client object.
 
         :param url:
@@ -147,6 +146,7 @@ class AvaticaClient(object):
         """
         self.url = parse_url(url)
         self.max_retries = max_retries if max_retries is not None else 3
+        self.auth = auth
         self.connection = None
 
     def connect(self):
@@ -163,7 +163,11 @@ class AvaticaClient(object):
         while True:
             logger.debug("POST %s %r %r", self.url.geturl(), body, headers)
             try:
-                response = requests.request('post', self.url.geturl(), data=body, stream=True, headers=headers, auth=HTTPKerberosAuth(mutual_authentication=OPTIONAL, mech_oid=kerberos.GSS_MECH_OID_SPNEGO)) 
+                if self.auth == "SPNEGO":
+                    response = requests.request('post', self.url.geturl(), data=body, stream=True, headers=headers, auth=HTTPKerberosAuth(mutual_authentication=OPTIONAL, mech_oid=kerberos.GSS_MECH_OID_SPNEGO))
+                else:
+                    response = requests.request('post', self.url.geturl(), data=body, stream=True, headers=headers)
+
             except requests.HTTPError as e:
                 if retry_count > 0:
                     delay = math.exp(-retry_count)
